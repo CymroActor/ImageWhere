@@ -1,0 +1,371 @@
+Attribute VB_Name = "Photograph_label"
+Option Explicit
+Dim range() As String
+
+Private Function set_label_SQL(range, include_scanned) As String
+'***************************************
+' Module/Form Name   : Photograph_label
+'
+' Procedure Name     : set_label_SQL
+'
+' Purpose            :
+'
+' Date Created       : 05/07/2005
+'
+' Author             : GARETH SAUNDERS
+'
+' Parameters         : range - As
+'                    : String -
+'
+' Returns            :
+'
+' Amendment History  : Date       Author    Description
+'                    : --------------------------------
+'
+'***************************************
+'
+On Error GoTo set_label_SQL_Error
+'
+'******** Code Starts Here *************
+'
+    Dim scanned_SQL             As String
+    Dim strNoDigitalImages      As String
+    
+    strNoDigitalImages = " Photograph.photograph_no <> 0 AND "
+    
+    If include_scanned Then
+        scanned_SQL = ""
+    Else
+        scanned_SQL = " AND Photograph.scanned = False"
+    End If
+    
+    If characters_after_decimal(range(1, 1)) = 0 Then
+        set_label_SQL = _
+            "SELECT DISTINCTROW Batch.batch_no, Photograph.photograph_no, " _
+          & "Batch.Description, Batch.Copyright, Batch.Credit " _
+          & "FROM Batch INNER JOIN Photograph ON Batch.batch_no = Photograph.batch_no " _
+          & "WHERE" & strNoDigitalImages & "(((Batch.batch_no) Between " + Str(range(1, 1)) + " And " _
+          & Str(range(2, 1)) + "))" + scanned_SQL + ";"
+    Else
+        set_label_SQL = _
+            "SELECT DISTINCTROW Batch.batch_no, Photograph.photograph_no, " _
+          & "Batch.Description, Batch.Copyright, Batch.Credit " _
+          & "FROM Batch INNER JOIN Photograph ON Batch.batch_no = Photograph.batch_no " _
+          & "WHERE" & strNoDigitalImages & "(((Batch.batch_no) = " + characters_before_decimal(range(1, 1)) _
+          & ") AND ((Photograph.photograph_no) Between " _
+          & characters_after_decimal(range(1, 1)) + " And " _
+          & characters_after_decimal(range(2, 1)) + "))" + scanned_SQL + ";"
+    End If
+    
+    Dim i As Integer
+    For i = 2 To UBound(range, 2)
+        set_label_SQL = set_label_SQL + " UNION "
+        If characters_after_decimal(range(1, i)) = 0 Then
+            set_label_SQL = set_label_SQL + _
+                "SELECT DISTINCTROW Batch.batch_no, Photograph.photograph_no, " _
+              & "Batch.Description, Batch.Copyright, Batch.Credit " _
+              & "FROM Batch INNER JOIN Photograph ON Batch.batch_no = Photograph.batch_no " _
+              & "WHERE" & strNoDigitalImages & "(((Batch.batch_no) Between " + Str(range(1, i)) + " And " _
+              & Str(range(2, i)) + "))" + scanned_SQL + ";"
+        Else
+            set_label_SQL = set_label_SQL + _
+                "SELECT DISTINCTROW Batch.batch_no, Photograph.photograph_no, " _
+              & "Batch.Description, Batch.Copyright, Batch.Credit " _
+              & "FROM Batch INNER JOIN Photograph ON Batch.batch_no = Photograph.batch_no " _
+              & "WHERE" & strNoDigitalImages & "(((Batch.batch_no) = " + characters_before_decimal(range(1, i)) _
+              & ") AND ((Photograph.photograph_no) Between " _
+              & characters_after_decimal(range(1, i)) + " And " _
+              & characters_after_decimal(range(2, i)) + "))" + scanned_SQL + ";"
+        End If
+    Next i
+'
+'********* Code Ends Here **************
+'
+   Exit Function
+'
+set_label_SQL_Error:
+    ErrorRaise "Photograph_label.set_label_SQL"
+End Function
+
+Public Sub print_label(range, include_scanned, abort As Boolean)
+    
+    Dim oAccessDB As Object
+    Dim SQL As String
+    Dim MyQuery As QueryDef
+    Dim rstLabels As ADODB.Recordset
+    
+    msg_title = "Print Photograph Label"
+    
+    abort = True
+    
+    ' Delete the QueryDef.
+    
+    On Error Resume Next
+    db.QueryDefs.Delete "Labels"
+    ' Create the QueryDef.
+    
+    SQL = set_label_SQL(range, include_scanned)
+    '
+    '   Determine whether there are any records returned.
+    '
+    Set rstLabels = New ADODB.Recordset
+    With rstLabels
+        .Open SQL, gdbADO, adOpenStatic, , adCmdText
+        .MoveLast
+        If .RecordCount = 0 Then
+            MsgBox "No photographs have been returned by this request." & vbCrLf & "Please try again.", vbExclamation
+            .Close
+            Exit Sub
+        End If
+        .Close
+    End With
+    '
+    Set MyQuery = db.CreateQueryDef("Labels", SQL)
+    If Err.Number <> 3012 Then
+        If Err.Number <> 0 Then
+            GoTo error_proc
+        End If
+    End If
+    
+    On Error GoTo error_proc
+    
+    Set oAccessDB = GetObject(glo_dbname, "Access.Application")
+'   Maximize the report.
+
+    oAccessDB.Visible = True
+    oAccessDB.DoCmd.Maximize
+    oAccessDB.DoCmd.RunCommand 10               'acCmdAppMaximize
+    
+    
+    oAccessDB.DoCmd.OpenReport "LabelsR", 2     'acPreview
+    
+    abort = False
+    
+    Exit Sub
+
+error_proc:
+
+    MsgBox Str(Err.Number) + " - " + Err.Description, vbCritical
+
+End Sub
+
+Private Sub validate_range(ByVal range_no As Integer, ByVal range_text As String, abort As Boolean)
+          Dim start As Integer
+          Dim finish As Integer
+          Dim photo_no_from As Long
+          Dim photo_no_to As Long
+          Dim image_no_from As Long
+          Dim image_no_to As Long
+    
+10        On Error GoTo error_proc
+    
+20        abort = True
+30        start = 1
+    
+40        If Not IsNumeric(Mid(range_text, start, 1)) Then
+50            MsgBox "Invalid Range " + range_text, vbExclamation, "Print Photograph Labels"
+60            Exit Sub
+70        End If
+    
+80        If Not IsNumeric(Mid(range_text, Len(range_text), 1)) Then
+90            MsgBox "Invalid Range " + range_text, vbExclamation, "Print Photograph Labels"
+100           Exit Sub
+110       End If
+    
+120       finish = InStr(start + 1, range_text, "-")
+  
+130       range(1, range_no) = Mid(range_text, start, finish - start)
+140       start = finish + 1
+150       range(2, range_no) = Mid(range_text, start)
+      '
+      '   Apply basic validation.
+      '
+160       If Not IsNumeric(range(1, range_no)) Or _
+              range(1, range_no) = 0 Then
+170           MsgBox "Invalid Range " + range_text, vbExclamation, "Print Photograph Labels"
+180           Exit Sub
+190       End If
+    
+200       If Not IsNumeric(range(2, range_no)) Or _
+              range(2, range_no) = 0 Then
+210           MsgBox "Invalid Range " + range_text, vbExclamation, "Print Photograph Labels"
+220           Exit Sub
+230       End If
+      '
+      '   Valid combinations are: a) x-y
+      '                           b) x.m-x.n
+      '
+240       photo_no_from = CLng(characters_before_decimal(range(1, range_no)))
+250       photo_no_to = CLng(characters_before_decimal(range(2, range_no)))
+260       image_no_from = CLng(characters_after_decimal(range(1, range_no)))
+270       image_no_to = CLng(characters_after_decimal(range(2, range_no)))
+      '
+280       If image_no_from = 0 And _
+             image_no_to = 0 And _
+             photo_no_to >= photo_no_from Then
+290           GoTo valid_range
+300       Else
+310           If image_no_from <> 0 And _
+                 image_no_to <> 0 And _
+                 image_no_to >= image_no_from And _
+                 photo_no_from = photo_no_to Then
+320               GoTo valid_range
+330           Else
+340               MsgBox "Invalid Range " + range_text, vbExclamation, "Print Photograph Labels"
+350               Exit Sub
+360           End If
+370       End If
+    
+valid_range:
+
+380       abort = False
+    
+390       Exit Sub
+
+error_proc:
+
+400       MsgBox Str(Err.Number) + " - " + Err.Description, vbCritical
+
+End Sub
+
+
+
+Public Sub print_ranges(ranges_string As String, _
+                        include_scanned, _
+                        abort As Boolean)
+  
+10        On Error GoTo error_proc
+    
+20        abort = True
+      '
+      '   Validate the string initially
+      '
+30        validate_ranges_string ranges_string, abort
+40        If abort Then
+50            Exit Sub
+60        Else
+70            abort = True
+80        End If
+      '
+      '   Print the label.
+      '
+90        print_label range, include_scanned, abort
+100       If abort Then
+110           Exit Sub
+120       Else
+130           abort = True
+140       End If
+    
+150       abort = False
+    
+160       Exit Sub
+
+error_proc:
+
+170       MsgBox Str(Err.Number) + " - " + Err.Description, vbCritical
+ 
+End Sub
+
+
+
+Private Sub validate_ranges_string(ranges_string As String, abort As Boolean)
+  
+10        On Error GoTo error_proc
+    
+20        abort = True
+    
+          Dim no_of_ranges As Integer
+          Dim start As Integer
+          Dim finish As Integer
+      '
+      '   Remove leading and trailing spaces.
+      '
+30        ranges_string = LTrim(RTrim(ranges_string))
+40        If Len(ranges_string) = 0 Then
+50            MsgBox "Please enter at least one range", vbExclamation, "Print Photograph Labels"
+60            Exit Sub
+70        End If
+      '
+80        no_of_ranges = 0
+90        start = 1
+100       If Mid(ranges_string, start, 1) = "," Then
+110           MsgBox "Invalid Photograph Range", vbExclamation, "Print Photograph Labels"
+120           Exit Sub
+130       End If
+    
+140       If Mid(ranges_string, Len(ranges_string), 1) = "," Then
+150           MsgBox "Invalid Photograph Range", vbExclamation, "Print Photograph Labels"
+160           Exit Sub
+170       End If
+    
+180       Do
+190           If no_of_ranges > 29 Then
+200               MsgBox "There cannot be greater than 30 ranges", vbExclamation, "Print Photograph Labels"
+210               Exit Sub
+220           End If
+  
+230           finish = InStr(start + 1, ranges_string, ",")
+  
+240           If Not finish = 0 Then
+250               no_of_ranges = no_of_ranges + 1
+260               ReDim Preserve range(1 To 2, 1 To no_of_ranges) ' Resize to an additional element.
+270               range(1, no_of_ranges) = Mid(ranges_string, start, finish - start)
+280               start = finish + 1
+290               If Mid(ranges_string, start, 1) = "," Then
+300                   MsgBox "Invalid Photograph Range", vbExclamation, "Print Photograph Labels"
+310                   Exit Sub
+320               End If
+330           End If
+  
+340       Loop While finish <> 0
+    
+350       If Len(ranges_string) <> 0 Then
+      '
+      '   Store last range.
+      '
+360               If Mid(ranges_string, start, 1) = "," Then
+370                   MsgBox "Invalid Photograph Range", vbExclamation, "Print Photograph Labels"
+380                   Exit Sub
+390               End If
+400               no_of_ranges = no_of_ranges + 1
+410               ReDim Preserve range(1 To 2, 1 To no_of_ranges) ' Resize to an additional element.
+420               range(1, no_of_ranges) = Mid(ranges_string, start)
+430       End If
+    
+          Dim i
+440       For i = 1 To no_of_ranges
+450           range(1, i) = LTrim(RTrim(range(1, i)))
+460           If Not IsNumeric(range(1, i)) Then
+470               If InStr(range(1, i), "-") Then
+480                   validate_range i, range(1, i), abort
+490                   If abort Then
+500                       Exit Sub
+510                   Else
+520                       abort = True
+530                   End If
+540               Else
+550                   MsgBox "Invalid Photograph Range", vbExclamation, "Print Photograph Labels"
+560                   Exit Sub
+570               End If
+580           Else
+590               If range(1, i) = 0 Then
+600                   MsgBox "Invalid Photograph Range", vbExclamation, "Print Photograph Labels"
+610                   Exit Sub
+620               Else
+630                   range(2, i) = range(1, i)
+640               End If
+650           End If
+660       Next i
+    
+670       abort = False
+    
+680       Exit Sub
+
+error_proc:
+
+690       MsgBox Str(Err.Number) + " - " + Err.Description, vbCritical
+ 
+End Sub
+
+
+
